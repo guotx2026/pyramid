@@ -1,0 +1,39 @@
+// 参数定义
+INPUT: FAST_LEN(10,2,200,1);                 // 快线周期
+INPUT: SLOW_LEN(20,3,300,1);                 // 慢线周期，必须大于快线
+INPUT: STOP_PCT(2,0.1,20,0.1);               // 止损百分比（相对开仓价）
+INPUT: FUND_PER_TRADE(100000,1000,10000000,1000);  // 单次开仓使用资金（用户自设）
+INPUT: MULTIPLIER_VAL(10,1,1000,1);          // 合约乘数（螺纹为10，股指为300）
+INPUT: MARGIN_RATE_PCT(10,0.1,100,0.1);      // 保证金比例（%），股票填100
+INPUT: LOT_STEP(1,1,100,1);                  // 手数步长（期货为1，股票为100）
+
+// 上一根K线收盘价，避免当前K线盘中波动导致信号闪烁
+REFC := REF(CLOSE, 1);
+
+// 用上一根K线收盘价计算快慢均线
+MA_FAST := MA(REFC, FAST_LEN);
+MA_SLOW := MA(REFC, SLOW_LEN);
+
+// 金叉与死叉信号
+GOLDEN_CROSS := CROSS(MA_FAST, MA_SLOW);     // 快线上穿慢线
+DEAD_CROSS := CROSS(MA_SLOW, MA_FAST);       // 快线下穿慢线
+
+// 根据用户设定的开仓资金计算下单手数，向下取整到步长整数倍
+V_LOT := INTPART(FUND_PER_TRADE / (CLOSE * MULTIPLIER_VAL * MARGIN_RATE_PCT / 100) / LOT_STEP) * LOT_STEP;
+
+// 止损条件：多头持仓价格回撤超过止损百分比
+STOP_LONG_COND := HOLDING > 0 AND CLOSE <= AVGENTERPRICE * (1 - STOP_PCT / 100);
+// 止损条件：空头持仓价格反向超过止损百分比
+STOP_SHORT_COND := HOLDING < 0 AND CLOSE >= AVGENTERPRICE * (1 + STOP_PCT / 100);
+
+// 平多：死叉或止损，全部平仓
+SELL(HOLDING > 0 AND (DEAD_CROSS OR STOP_LONG_COND), 0, THISCLOSE);
+
+// 平空：金叉或止损，全部平仓
+SELLSHORT(HOLDING < 0 AND (GOLDEN_CROSS OR STOP_SHORT_COND), 0, THISCLOSE);
+
+// 开多：金叉且当前无持仓，手数大于0，且数据足够避免均线未形成
+BUY(GOLDEN_CROSS AND HOLDING = 0 AND V_LOT > 0 AND BARPOS > SLOW_LEN + 1, V_LOT, THISCLOSE);
+
+// 开空：死叉且当前无持仓，手数大于0，且数据足够
+BUYSHORT(DEAD_CROSS AND HOLDING = 0 AND V_LOT > 0 AND BARPOS > SLOW_LEN + 1, V_LOT, THISCLOSE);
