@@ -1,0 +1,43 @@
+// ============================================================
+// 双均线金叉死叉策略（图表 · 逐K线计算模式）
+// 金叉开多、死叉开空；2%硬止损；THISCLOSE 收盘价成交；
+// 均线采用【上一根K线收盘价】计算，避免信号闪烁；
+// 手数 = 用户设定资金 / (上一根收盘价 × 合约乘数)。
+// 注意：公式属性里必须勾选【逐K线计算】且不要勾选【仅刷最后K线】。
+// ============================================================
+
+// ---------- 参数定义 ----------
+INPUT: FAST_LEN(5,1,100,1);                  // 短期均线周期
+INPUT: SLOW_LEN(20,2,200,1);                 // 长期均线周期
+INPUT: STOP_LOSS_PCT(2,0.1,10,0.1);          // 止损百分比（%）
+INPUT: OPEN_CASH(50000,10000,1000000,10000); // 每次开仓使用的资金
+INPUT: MULTIPLIER_VAL(10,1,1000,1);          // 合约乘数（螺纹10、豆粕10、股票填1）
+
+// ---------- 均线计算：用上一根K线的收盘价，避免用当根未走完的收盘价导致信号闪烁 ----------
+MA_FAST := MA(REF(CLOSE,1), FAST_LEN);
+MA_SLOW := MA(REF(CLOSE,1), SLOW_LEN);
+
+// ---------- 交叉信号 ----------
+CROSS_UP   := CROSS(MA_FAST, MA_SLOW);   // 金叉：短均线上穿长均线
+CROSS_DOWN := CROSS(MA_SLOW, MA_FAST);   // 死叉：短均线下穿长均线
+
+// ---------- 止损条件（基于持仓均价 AVGENTERPRICE） ----------
+LONG_STOP  := HOLDING > 0 AND CLOSE <= AVGENTERPRICE * (1 - STOP_LOSS_PCT/100);
+SHORT_STOP := HOLDING < 0 AND CLOSE >= AVGENTERPRICE * (1 + STOP_LOSS_PCT/100);
+
+// ---------- 平仓：止损与反向信号合并为一个条件，避免同一根K线重复平仓 ----------
+SELL(CROSS_DOWN OR LONG_STOP, 0, THISCLOSE);       // 持多：死叉或止损 → 平多
+SELLSHORT(CROSS_UP OR SHORT_STOP, 0, THISCLOSE);   // 持空：金叉或止损 → 平空
+
+// ---------- 手数计算：用户设置资金 / (上一根收盘价 × 合约乘数)，向下取整，最少1手 ----------
+LOT_VAL := 0;
+IF REF(CLOSE,1) > 0 THEN BEGIN
+    LOT_VAL := INTPART(OPEN_CASH / (REF(CLOSE,1) * MULTIPLIER_VAL));
+END
+IF LOT_VAL < 1 THEN BEGIN
+    LOT_VAL := 1;
+END
+
+// ---------- 开仓（HOLDING=0 防止连续同向信号重复开仓；反手时前一条平仓已把 HOLDING 归零） ----------
+BUY(CROSS_UP AND HOLDING = 0, LOT_VAL, THISCLOSE);         // 金叉且空仓 → 开多
+BUYSHORT(CROSS_DOWN AND HOLDING = 0, LOT_VAL, THISCLOSE);  // 死叉且空仓 → 开空
